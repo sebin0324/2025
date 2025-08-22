@@ -1,50 +1,71 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import matplotlib.pyplot as plt
 
-# ==========================
-# 샘플 e스포츠 데이터 불러오기 (CSV 대신 코드 내에 직접 작성)
-# ==========================
-data = {
-    'Player': ['Faker', 'Zeus', 'Chovy', 'Peyz', 'Ruler', 'Canyon', 'ShowMaker', 'Viper'],
-    'Team': ['T1', 'T1', 'GEN', 'GEN', 'JD', 'DK', 'DK', 'HLE'],
-    'Kills': [7, 3, 5, 8, 9, 4, 6, 10],
-    'Deaths': [1, 2, 3, 2, 2, 5, 4, 3],
-    'Assists': [8, 5, 7, 10, 11, 6, 9, 12]
-}
+st.set_page_config(page_title="LoL E-Sports Dashboard", layout="wide")
 
-df = pd.DataFrame(data)
-df["KDA"] = (df["Kills"] + df["Assists"]) / df["Deaths"]
+st.title("🎮 League of Legends E-Sports Dashboard")
+st.markdown("Oracle’s Elixir 데이터를 활용한 **실제 프로 경기 분석** 대시보드")
 
-# ==========================
-# Streamlit 앱 시작
-# ==========================
-st.set_page_config(page_title="LCK Sample Dashboard", layout="wide")
+# -----------------------------
+# 데이터 업로드 / 불러오기
+# -----------------------------
+st.sidebar.header("데이터 불러오기")
+uploaded_file = st.sidebar.file_uploader("Oracle’s Elixir CSV 업로드", type=["csv"])
 
-st.title("🎮 LCK Sample Dashboard")
-st.markdown("샘플 데이터를 활용한 선수별 경기 스탯 시각화 대시보드입니다.")
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.success("✅ 데이터 로드 완료!")
 
-# ==========================
-# 데이터 테이블
-# ==========================
-st.subheader("📊 선수별 상세 데이터")
-st.dataframe(df)
+    # -----------------------------
+    # 필터 옵션
+    # -----------------------------
+    st.sidebar.header("필터")
+    seasons = df["season"].unique()
+    selected_season = st.sidebar.selectbox("시즌 선택", seasons)
 
-# ==========================
-# 시각화 1: 선수별 KDA 바 차트
-# ==========================
-fig1 = px.bar(df, x="Player", y="KDA", color="Team", title="선수별 KDA")
-st.plotly_chart(fig1, use_container_width=True)
+    teams = df["team"].unique()
+    selected_team = st.sidebar.selectbox("팀 선택", teams)
 
-# ==========================
-# 시각화 2: 킬/데스/어시스트 분포
-# ==========================
-fig2 = px.scatter(df, x="Kills", y="Assists", size="KDA", color="Team",
-                  hover_name="Player", title="킬 vs 어시스트 (크기: KDA)")
-st.plotly_chart(fig2, use_container_width=True)
+    filtered = df[(df["season"] == selected_season) & (df["team"] == selected_team)]
 
-# ==========================
-# 하이라이트 카드
-# ==========================
-best_player = df.sort_values(by='KDA', ascending=False).iloc[0]
-st.markdown(f"### 🏆 최고 KDA 선수: **{best_player['Player']}** ({best_player['KDA']:.1f})")
+    # -----------------------------
+    # 기본 정보
+    # -----------------------------
+    st.subheader(f"📑 {selected_season} 시즌 - {selected_team} 경기 데이터")
+    st.write(f"총 경기 수: {len(filtered)}")
+
+    # -----------------------------
+    # 승률 계산
+    # -----------------------------
+    win_rate = filtered["result"].mean() * 100  # Oracle 데이터에서 result = 1이면 승리
+    st.metric("승률", f"{win_rate:.1f}%")
+
+    # -----------------------------
+    # 평균 K/D/A
+    # -----------------------------
+    col1, col2, col3 = st.columns(3)
+    col1.metric("평균 킬", f"{filtered['kills'].mean():.1f}")
+    col2.metric("평균 데스", f"{filtered['deaths'].mean():.1f}")
+    col3.metric("평균 어시스트", f"{filtered['assists'].mean():.1f}")
+
+    # -----------------------------
+    # 경기별 KDA 그래프
+    # -----------------------------
+    st.subheader("📊 경기별 킬/데스/어시스트")
+    fig, ax = plt.subplots(figsize=(8, 4))
+    filtered[["kills", "deaths", "assists"]].reset_index(drop=True).plot(kind="bar", ax=ax)
+    plt.title(f"{selected_team} 경기별 KDA")
+    plt.xlabel("경기")
+    plt.ylabel("수치")
+    st.pyplot(fig)
+
+    # -----------------------------
+    # 원본 데이터 확인
+    # -----------------------------
+    with st.expander("🔍 원본 데이터 보기"):
+        st.dataframe(filtered)
+
+else:
+    st.info("📥 Oracle’s Elixir 사이트에서 CSV를 다운로드 후 업로드해 주세요.")
+    st.markdown("[Oracle’s Elixir 데이터 받기](https://oracleselixir.com/match-data)")
