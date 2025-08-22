@@ -1,4 +1,5 @@
-git+https://github.com/rigelifland/lolesports_api.git
-pandas
-plotly
-streamlit
+Player,Team,Kills,Deaths,Assists,KDA
+Faker,T1,7,1,8,15.0
+Zeus,T1,3,2,5,4.0
+Chovy,GEN,5,3,7,4.0
+Peyz,GEN,8,2,10,9.0
