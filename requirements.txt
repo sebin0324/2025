@@ -1,1 +1,9 @@
+# 팀별 승률
+st.bar_chart(team_data.set_index("팀")["승률"])
+
+# 메타 트렌드
+st.bar_chart(meta_data.set_index("챔피언")[["픽률", "밴률"]])
+
+# 스트리머 랭킹
+st.bar_chart(streamer_data.set_index("스트리머")["시청자 수"])
 
