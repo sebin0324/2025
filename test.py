@@ -1,282 +1,371 @@
-# app.py
+# Streamlit 해외여행 가이드/추천 앱
+
+아래 두 파일을 같은 폴더에 저장해 실행하세요.
+
+* `app.py`
+* `requirements.txt`
+
+터미널에서:
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+환경변수(필수):
+
+* `GOOGLE_MAPS_API_KEY` : Google Places API 키 (Places API, Geocoding API 활성화)
+
+---
+
+## app.py
+
+```python
+import os
+import math
+import time
+import json
+from typing import Dict, List, Optional, Tuple
+
 import streamlit as st
 import pandas as pd
-import requests
-from urllib.parse import quote
 
-# ---------------------------
-# 페이지/시크릿 설정
-# ---------------------------
-st.set_page_config(page_title="해외여행 추천(실시간 맛집)", page_icon="🌍", layout="wide")
+# Google Maps
+try:
+    import googlemaps
+except Exception as e:
+    googlemaps = None
 
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", None)          # Google Places API (Text Search)
-NAVER_CLIENT_ID = st.secrets.get("NAVER_CLIENT_ID", None)        # Naver Local Search
-NAVER_CLIENT_SECRET = st.secrets.get("NAVER_CLIENT_SECRET", None)
+# ------------------------------
+# 유틸
+# ------------------------------
+@st.cache_data(show_spinner=False)
+def geocode_city(gmaps, city_country: str) -> Optional[Tuple[float, float]]:
+    try:
+        res = gmaps.geocode(city_country)
+        if not res:
+            return None
+        loc = res[0]["geometry"]["location"]
+        return (loc["lat"], loc["lng"])
+    except Exception:
+        return None
 
-# ---------------------------
-# 한국인 인기 여행지 샘플 데이터
-# ---------------------------
-COUNTRY_DATA = {
+@st.cache_data(show_spinner=False)
+def places_search_text(gmaps, query: str) -> List[dict]:
+    out = []
+    try:
+        res = gmaps.places(query)
+        out.extend(res.get("results", []))
+        # next_page_token 처리
+        while res.get("next_page_token") and len(out) < 60:
+            time.sleep(2)
+            res = gmaps.places(query, page_token=res["next_page_token"])
+            out.extend(res.get("results", []))
+    except Exception:
+        pass
+    return out
+
+@st.cache_data(show_spinner=False)
+def places_nearby(gmaps, location: Tuple[float, float], radius: int, keyword: Optional[str] = None, type_: Optional[str] = None):
+    out = []
+    try:
+        res = gmaps.places_nearby(location=location, radius=radius, keyword=keyword, type=type_)
+        out.extend(res.get("results", []))
+        while res.get("next_page_token") and len(out) < 60:
+            time.sleep(2)
+            res = gmaps.places_nearby(location=location, radius=radius, keyword=keyword, type=type_, page_token=res["next_page_token"])
+            out.extend(res.get("results", []))
+    except Exception:
+        pass
+    return out
+
+# 가중 정렬 키 (평점 * log(리뷰수+1))
+def sort_key_rating(place: dict) -> float:
+    r = place.get("rating", 0.0)
+    n = place.get("user_ratings_total", 0)
+    return r * math.log(n + 1)
+
+# 지도 링크 생성
+def google_map_link(place_id: str) -> str:
+    return f"https://www.google.com/maps/place/?q=place_id:{place_id}"
+
+# ------------------------------
+# 나라별 지식 베이스 (간단 샘플)
+# 실제 사용 시 자유롭게 확장하세요.
+# ------------------------------
+COUNTRY_KB: Dict[str, dict] = {
     "일본": {
-        "만족도": 4.7,
-        "도시": {
-            "도쿄": ["요코하마", "가마쿠라", "하코네"],
-            "오사카": ["교토", "나라", "고베"],
-            "후쿠오카": ["다자이후", "이토시마", "야나가와"],
-        },
-        "위생": ["수돗물 대체로 안전", "길거리 음식 위생 양호", "쓰레기 분리 철저"],
-        "문화": ["질서·조용함 중시", "줄서기/새치기 금지", "온천 문신 규정 확인"],
-        "불편": ["영어 소통 난이도", "교통비 부담", "현금-only 가게 일부"],
-        "대표음식키워드": "스시 라멘 오코노미야키",
+        "위생": [
+            "공공장소 청결도가 매우 높음",
+            "식당/상점 손소독제 비치가 일반적",
+            "분리수거 철저 (쓰레기통 적음)"
+        ],
+        "문화": [
+            "실내에서 큰 소리로 통화/통행 방해는 실례",
+            "현금 결제를 선호하는 소규모 가게 여전히 존재",
+            "온천 이용 시 문신, 세정 예절 숙지"
+        ],
+        "지켜야할_예절": [
+            "에스컬레이터 한 줄 서기 (지역마다 방향 다름)",
+            "대중교통 내 통화/취식 자제",
+            "쓰레기 되가져가기 (특히 길거리)"
+        ],
+        "불편한점": [
+            "쓰레기통이 적어 휴지/봉투 지참 필요",
+            "영어 안내가 지역에 따라 부족할 수 있음",
+            "피크 시즌 관광지 과밀/대기열 김"
+        ],
+        "대표도시": ["도쿄", "오사카", "교토", "삿포로", "후쿠오카"],
+        "소도시_추천_키워드": ["온천", "성", "전통거리"]
     },
     "태국": {
-        "만족도": 4.4,
-        "도시": {
-            "방콕": ["아유타야", "파타야", "깐짜나부리"],
-            "푸켓": ["피피섬", "카오락", "팡아"],
-            "치앙마이": ["치앙라이", "매홍손", "람푼"],
-        },
-        "위생": ["생수 마시기 권장", "얼음/생야채 주의", "손소독제 지참"],
-        "문화": ["왕실 존중 필수", "사원 복장 규정", "발가락·머리 터치 금기"],
-        "불편": ["고온다습 기후", "교통혼잡", "바가지/호객"],
-        "대표음식키워드": "팟타이 똠얌꿍 망고스티키라이스",
+        "위생": ["대도시 대비 지방은 식수/위생 주의", "길거리 음식 위생 상태 점검 후 이용"],
+        "문화": ["사원 방문 시 노출 적은 복장", "머리 쓰다듬기는 실례"],
+        "지켜야할_예절": ["왕실 관련 우상/초상 경의 표하기", "신발 벗고 실내 출입 요구 많음"],
+        "불편한점": ["더위/습도 높음", "교통 체증", "택시 바가지 일부"],
+        "대표도시": ["방콕", "치앙마이", "푸켓"],
+        "소도시_추천_키워드": ["전통시장", "야외사원", "자연경관"]
     },
     "베트남": {
-        "만족도": 4.5,
-        "도시": {
-            "하노이": ["하롱베이", "닌빈", "사파"],
-            "호치민": ["메콩델타", "붕따우", "꾸찌터널"],
-            "다낭": ["호이안", "바나힐", "후에"],
-        },
-        "위생": ["생수 권장", "얼음/샐러드 주의", "길거리 음식 신뢰도 확인"],
-        "문화": ["가격 흥정 문화", "오토바이 교통 주의", "현지 통화 소액권 유용"],
-        "불편": ["오토바이 소음/매연", "스콜성 비", "QR/카드 결제 편차"],
-        "대표음식키워드": "쌀국수 반미 분짜",
+        "위생": ["수돗물 음용 지양", "길거리 음식은 붐비는 곳 선택"],
+        "문화": ["호칭/존댓말 중요", "사원 사진 촬영 매너"],
+        "지켜야할_예절": ["횡단보도 외 무단횡단 주의", "오토바이 도로 안전"],
+        "불편한점": ["오토바이 소음/매연", "교통 혼잡", "시내 이동 시 소매치기 주의"]
     },
-    "미국": {
-        "만족도": 4.3,
-        "도시": {
-            "뉴욕": ["저지시티", "필라델피아", "보스턴"],
-            "로스앤젤레스": ["샌디에이고", "라스베가스", "샌타바버라"],
-            "하와이(호놀룰루)": ["오아후 섬일주", "카일루아", "북쇼어"],
-        },
-        "위생": ["수돗물 지역차 존재", "레스토랑 위생 등급 표기", "팁 문화로 서비스 유지"],
-        "문화": ["팁(15~20%) 관례", "개인 공간 존중", "신분증 소지(주류·클럽)"],
-        "불편": ["물가/세금·팁 부담", "총기 관련 안전 이슈", "도심 주차난"],
-        "대표음식키워드": "버거 스테이크 타코",
-    },
-    "프랑스": {
-        "만족도": 4.5,
-        "도시": {
-            "파리": ["베르사유", "지베르니", "몽생미셸(장거리)"],
-            "니스": ["칸", "앙티브", "모나코"],
-            "리옹": ["안시", "그르노블", "디종"],
-        },
-        "위생": ["수돗물 대체로 안전", "생치즈/생고기 주의", "레스토랑 위생 준수"],
-        "문화": ["간단한 불어 인사 예의", "식사시간/시에스타", "드레스코드 신경"],
-        "불편": ["소매치기 주의", "파업/집회 변동성", "일요일 영업 제한"],
-        "대표음식키워드": "크루아상 스테이크타르타르 와인",
-    },
-    "스페인": {
-        "만족도": 4.5,
-        "도시": {
-            "바르셀로나": ["시체스", "타라고나", "히로나"],
-            "마드리드": ["똘레도", "세고비아", "아비라"],
-            "세비야": ["코르도바", "그라나다", "카디스"],
-        },
-        "위생": ["수돗물 지역차", "타파스 위생 양호", "늦은 식사 문화"],
-        "문화": ["시에스타(점심후 휴무)", "저녁식사 늦게", "소매치기 주의"],
-        "불편": ["언어 장벽(영·스)", "영업시간 변동", "관광지 혼잡"],
-        "대표음식키워드": "파에야 하몽 타파스",
+    "대만": {
+        "위생": ["노점도 비교적 위생적이나 선택 필요", "수돗물 끓여 마시기 권장"],
+        "문화": ["현금/카드 병행", "지하철 내 음식 금지"],
+        "지켜야할_예절": ["쓰레기 분리/시간 준수", "줄 서기 문화 철저"],
+        "불편한점": ["여름 더위", "피크타임 혼잡", "폭우 시즌"]
     },
     "싱가포르": {
-        "만족도": 4.6,
-        "도시": {
-            "싱가포르": ["리틀인디아", "차이나타운", "티옹바루"],
-        },
-        "위생": ["수돗물 안전", "호커센터 위생 관리 양호", "실내냉방 강함"],
-        "문화": ["깨끗함 유지(벌금 엄격)", "줄서기/공공질서 준수", "껌 반입 금지"],
-        "불편": ["물가 비쌈", "실내외 온도차", "술값 비쌈"],
-        "대표음식키워드": "치킨라이스 락사 칠리크랩",
+        "위생": ["도시 전체 청결 엄격 관리", "벌금 규정 다양"],
+        "문화": ["다문화 존중", "껌 반입/판매 제한"],
+        "지켜야할_예절": ["금연구역 엄격", "대중교통 예절 철저"],
+        "불편한점": ["물가 높음", "실내외 온도차 큼", "벌금 규정 주의"]
+    },
+    "프랑스": {
+        "위생": ["식당 위생 전반 양호", "수돗물 음용 가능"],
+        "문화": ["기본적인 프랑스어 인사 선호", "지하철 에티켓"],
+        "지켜야할_예절": ["상점 인사/작별 예의", "시간약속 중시"],
+        "불편한점": ["소매치기 주의", "파업/운행중단 빈발", "영업시간 제한"]
     },
 }
 
-# ---------------------------
-# API 호출 함수들 (캐시)
-# ---------------------------
-@st.cache_data(show_spinner=False, ttl=3600)
-def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
-    """Google Places Text Search: 평점/리뷰수 포함"""
-    if not GOOGLE_API_KEY:
-        return [], "Google API Key 없음"
-    url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-    params = {"query": query, "key": GOOGLE_API_KEY, "language": language}
-    try:
-        r = requests.get(url, params=params, timeout=15)
-        r.raise_for_status()
-        items = r.json().get("results", [])
-        items = sorted(
-            items,
-            key=lambda x: (x.get("rating", 0), x.get("user_ratings_total", 0)),
-            reverse=True,
-        )[:limit]
-        results = []
+# ------------------------------
+# 만족도 점수(예시)
+# - 관광지 상위 N개와 음식점 상위 N개의 평점/리뷰수를 가중 평균
+# ------------------------------
+
+def compute_satisfaction(attractions: List[dict], restaurants: List[dict]) -> float:
+    def avg_weighted(items: List[dict]) -> float:
+        if not items:
+            return 0
+        s = 0.0
+        w = 0.0
         for it in items:
-            name = it.get("name")
-            rating = it.get("rating")
-            reviews = it.get("user_ratings_total")
-            address = it.get("formatted_address", "")
-            place_id = it.get("place_id")
-            link = f"https://www.google.com/maps/search/?api=1&query={quote(name)}&query_place_id={place_id}" if place_id else None
-            results.append(
-                {
-                    "source": "Google",
-                    "name": name,
-                    "rating": rating,
-                    "reviews": reviews,
-                    "address": address,
-                    "link": link,
-                }
-            )
-        return results, None
-    except Exception as e:
-        return [], f"Google API 오류: {e}"
+            r = it.get("rating", 0.0)
+            n = it.get("user_ratings_total", 0)
+            weight = math.log(n + 1)
+            s += r * weight
+            w += weight
+        return s / w if w > 0 else 0
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def naver_local_search(query: str, display: int = 3):
-    """Naver Local Search: 평점 미제공(상호/주소/링크만)"""
-    if not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
-        return [], "Naver API Key 없음"
-    url = "https://openapi.naver.com/v1/search/local.json"
-    params = {"query": query, "display": display, "start": 1, "sort": "comment"}
-    headers = {
-        "X-Naver-Client-Id": NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
-    }
-    try:
-        r = requests.get(url, params=params, headers=headers, timeout=15)
-        r.raise_for_status()
-        items = r.json().get("items", [])
-        results = []
-        for it in items[:display]:
-            title = it.get("title", "").replace("<b>", "").replace("</b>", "")
-            address = it.get("roadAddress") or it.get("address") or ""
-            link = it.get("link") or None
-            results.append(
-                {
-                    "source": "Naver",
-                    "name": title,
-                    "rating": None,
-                    "reviews": None,
-                    "address": address,
-                    "link": link,
-                }
-            )
-        return results, None
-    except Exception as e:
-        return [], f"Naver API 오류: {e}"
+    a = avg_weighted(attractions)
+    b = avg_weighted(restaurants)
+    # 관광=60%, 음식=40%
+    score = 0.6 * a + 0.4 * b
+    return round(score, 2)
 
-def search_restaurants(city: str, keyword: str, use_google: bool, use_naver: bool, limit: int = 3):
-    results, errors = [], []
-    query = f"{city} {keyword}".strip()
-
-    if use_google:
-        g, err = google_places_text_search(query, language="ko", limit=limit)
-        results.extend(g)
-        if err: errors.append(err)
-
-    if use_naver:
-        n, err = naver_local_search(query, display=limit)
-        results.extend(n)
-        if err: errors.append(err)
-
-    return results, errors
-
-# ---------------------------
+# ------------------------------
 # UI
-# ---------------------------
-st.title("🌍 해외여행 만족도 & 추천 가이드 (실시간 맛집 포함)")
-st.caption("한국인 인기 여행지를 중심으로, 만족도/도시·소도시/위생·문화/불편한 점과 실시간 맛집 정보를 제공합니다.")
+# ------------------------------
+st.set_page_config(page_title="해외여행 추천 · 위생 · 문화 가이드", page_icon="✈️", layout="wide")
 
-left, right = st.columns([1, 2], gap="large")
+st.title("✈️ 해외여행 추천 · 음식 · 문화 · 위생 올인원")
+st.caption("Google Places API를 활용한 실제 평점 기반 추천. 나라별 예절/위생/주의사항은 요약 가이드로 제공됩니다.")
 
-with left:
-    country = st.selectbox("나라 선택", list(COUNTRY_DATA.keys()))
-    city = None
-    if country:
-        cities = list(COUNTRY_DATA[country]["도시"].keys())
-        city = st.selectbox("도시 선택", cities)
-        small_cities = COUNTRY_DATA[country]["도시"].get(city, [])
+api_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
+if not api_key:
+    st.warning("환경변수 GOOGLE_MAPS_API_KEY 가 설정되어 있지 않습니다. 일부 기능이 동작하지 않을 수 있어요.")
 
-    st.divider()
-    st.markdown("**맛집 검색 옵션**")
-    default_kw = COUNTRY_DATA[country]["대표음식키워드"] if country else "맛집"
-    keyword = st.text_input("검색 키워드(예: 스시, 파에야, 버거…)", value=default_kw)
-    source = st.multiselect(
-        "데이터 소스 선택",
-        ["Google(평점)", "Naver(링크)"],
-        default=["Google(평점)", "Naver(링크)"],
-    )
-    limit = st.slider("맛집 표시 개수(소스별)", min_value=1, max_value=5, value=3, step=1)
+if googlemaps is None and api_key:
+    st.error("googlemaps 패키지가 설치되지 않았습니다. requirements.txt로 설치 후 다시 시도하세요.")
 
-with right:
-    if country:
-        data = COUNTRY_DATA[country]
-        st.subheader(f"🇺🇳 {country} 여행 인포")
+gmaps = googlemaps.Client(key=api_key) if (api_key and googlemaps) else None
 
-        mc1, mc2, mc3 = st.columns(3)
-        mc1.metric("여행 만족도(5점)", f"{data['만족도']}")
-        mc2.metric("추천 도시 수", f"{len(data['도시'])}")
-        mc3.metric("소도시(예시)", f"{len([s for v in data['도시'].values() for s in v])}")
+# 입력 영역
+colA, colB, colC = st.columns([1.3, 1, 1])
+with colA:
+    country = st.selectbox("나라 선택", sorted(COUNTRY_KB.keys()))
+with colB:
+    default_city = COUNTRY_KB.get(country, {}).get("대표도시", [""])[0] if COUNTRY_KB.get(country) else ""
+    city = st.text_input("주요 도시 (예: 도쿄, 파리)", value=default_city)
+with colC:
+    show_small_towns = st.checkbox("주요 도시 주변 소도시 추천 포함", value=True)
 
-        st.markdown("### 📍 추천 도시 → 소도시")
-        for c, subs in data["도시"].items():
-            st.write(f"- **{c}** → {', '.join(subs)}")
+interest = st.multiselect(
+    "관심사(추천 정밀도 향상)",
+    ["미술관", "박물관", "자연경관", "전통거리", "온천", "성", "해변", "사원", "카페", "바"] ,
+    default=["박물관", "전통거리"]
+)
 
-        st.markdown("### 🧼 위생 팁")
-        st.write("• " + " / ".join(data["위생"]))
+search_btn = st.button("🔎 추천 보기", use_container_width=True)
 
-        st.markdown("### 🧭 꼭 지켜야 하는 문화/알아둘 점")
-        st.write("• " + " / ".join(data["문화"]))
+if search_btn:
+    if not (gmaps and city and country):
+        st.error("API 키, 나라, 도시를 확인해주세요.")
+        st.stop()
 
-        st.markdown("### ⚠️ 불편한 점")
-        st.write("• " + " / ".join(data["불편"]))
+    with st.spinner("도시 좌표 확인 중..."):
+        latlng = geocode_city(gmaps, f"{city}, {country}")
 
-        st.markdown("### 📊 나라별 만족도 비교")
-        df = pd.DataFrame(
-            {"나라": list(COUNTRY_DATA.keys()),
-             "만족도": [COUNTRY_DATA[c]["만족도"] for c in COUNTRY_DATA]}
-        ).set_index("나라")
-        st.bar_chart(df)
+    if not latlng:
+        st.error("도시를 찾을 수 없습니다. 표기(로마자/현지어)를 바꿔 다시 시도해보세요.")
+        st.stop()
 
-        st.divider()
-        st.markdown("### 🍽️ 실시간 맛집 추천")
-        if not city:
-            st.info("도시를 선택하면 맛집을 검색합니다.")
+    # 관광지 수집
+    with st.spinner("관광지 검색 중..."):
+        attractions = []
+        # 기본: tourist_attraction
+        nearby = places_nearby(gmaps, latlng, radius=15000, type_="tourist_attraction")
+        attractions.extend(nearby)
+        # 관심사 키워드
+        for kw in interest:
+            more = places_nearby(gmaps, latlng, radius=20000, keyword=kw)
+            attractions.extend(more)
+        # 정렬 및 중복 제거
+        seen = set()
+        uniq = []
+        for p in sorted(attractions, key=sort_key_rating, reverse=True):
+            pid = p.get("place_id")
+            if pid and pid not in seen:
+                seen.add(pid)
+                uniq.append(p)
+        attractions = uniq[:20]
+
+    # 음식점 Top 3 (평점 + 리뷰수)
+    with st.spinner("음식점 추천 중..."):
+        foods = places_nearby(gmaps, latlng, radius=5000, type_="restaurant")
+        foods = sorted(foods, key=sort_key_rating, reverse=True)[:3]
+
+    # 소도시 제안: 'town' 키워드 인근 텍스트 검색 + 행정구역 레벨 탐색
+    small_towns = []
+    if show_small_towns:
+        with st.spinner("주변 소도시 탐색 중..."):
+            q = f"towns near {city} {country}"
+            cand = places_search_text(gmaps, q)
+            # locality 중심 후보만 추림
+            for c in cand:
+                types = c.get("types", [])
+                if any(t in types for t in ["locality", "sublocality", "administrative_area_level_3"]):
+                    small_towns.append(c)
+            # 보정: 관광 키워드 기반도 추가
+            if not small_towns:
+                for kw in COUNTRY_KB.get(country, {}).get("소도시_추천_키워드", []):
+                    cand2 = places_search_text(gmaps, f"{kw} near {city} {country}")
+                    small_towns.extend(cand2)
+            # 정렬/상위 노출
+            small_towns = sorted(small_towns, key=sort_key_rating, reverse=True)[:6]
+
+    # 만족도 점수 계산
+    score = compute_satisfaction(attractions, foods)
+
+    # ---------------- UI 출력 ----------------
+    st.subheader(f"🇺🇳 {country} · {city} 여행 요약")
+    st.metric(label="예상 만족도(가중 평균)", value=f"{score} / 5.0")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 🏛️ 볼거리 Top 추천")
+        if attractions:
+            df_attr = pd.DataFrame([
+                {
+                    "이름": p.get("name"),
+                    "평점": p.get("rating", None),
+                    "리뷰수": p.get("user_ratings_total", 0),
+                    "주소": p.get("vicinity") or p.get("formatted_address"),
+                    "지도": google_map_link(p.get("place_id", "")),
+                }
+                for p in attractions[:10]
+            ])
+            st.dataframe(df_attr, use_container_width=True, hide_index=True)
         else:
-            use_google = "Google(평점)" in source
-            use_naver = "Naver(링크)" in source
+            st.info("관광지 데이터를 찾지 못했습니다.")
 
-            if not use_google and not use_naver:
-                st.warning("최소 1개 이상의 소스를 선택하세요.")
-            else:
-                if use_google and not GOOGLE_API_KEY:
-                    st.warning("🔑 Google API 키가 설정되지 않았습니다. secrets.toml에 GOOGLE_API_KEY를 추가하세요.")
-                if use_naver and not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
-                    st.warning("🔑 Naver API 키가 설정되지 않았습니다. secrets.toml에 NAVER_CLIENT_ID/SECRET을 추가하세요.")
+    with col2:
+        st.markdown("### 🍽️ 음식점 Top 3 (Google 평점 기준)")
+        if foods:
+            for i, f in enumerate(foods, 1):
+                st.markdown(
+                    f"**{i}. {f.get('name')}** — 평점 {f.get('rating', 'N/A')} / 리뷰 {f.get('user_ratings_total', 0)}  ")
+                st.markdown(f"📍 {f.get('vicinity') or f.get('formatted_address', '')}")
+                st.markdown(f"[구글지도 열기]({google_map_link(f.get('place_id',''))})")
+                st.divider()
+        else:
+            st.info("음식점 데이터를 찾지 못했습니다.")
 
-                with st.spinner(f"‘{city}’ 맛집 검색 중..."):
-                    results, errs = search_restaurants(city, keyword, use_google, use_naver, limit)
+    if show_small_towns:
+        st.markdown("### 🏘️ 주변 소도시/근교 후보")
+        if small_towns:
+            df_town = pd.DataFrame([
+                {
+                    "이름": t.get("name"),
+                    "유형": ", ".join(t.get("types", [])[:3]),
+                    "평점": t.get("rating", None),
+                    "리뷰수": t.get("user_ratings_total", 0),
+                    "지도": google_map_link(t.get("place_id", "")),
+                }
+                for t in small_towns
+            ])
+            st.dataframe(df_town, use_container_width=True, hide_index=True)
+        else:
+            st.info("주변 소도시 추천 결과가 부족합니다. 키워드/도시를 바꿔보세요.")
 
-                for e in errs:
-                    st.error(e)
+    st.markdown("### 🧼 위생 · 🧭 문화 · ✅ 지켜야 할 예절 · 😕 불편한 점 (요약)")
+    kb = COUNTRY_KB.get(country, {})
 
-                if results:
-                    table = pd.DataFrame(results)
-                    sort_cols = [c for c in ["rating", "reviews"] if c in table.columns]
-                    if sort_cols:
-                        table = table.sort_values(by=sort_cols, ascending=False)
-                    show_cols = [c for c in ["source", "name", "rating", "reviews", "address", "link"] if c in table.columns]
-                    st.dataframe(table[show_cols], use_container_width=True)
-                else:
-                    st.info("검색 결과가 없습니다. 키워드를 바꾸거나 소스를 변경해보세요.")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**🧼 위생**")
+        st.markdown("\n".join([f"- {x}" for x in kb.get("위생", [])]) or "- 자료 준비 중")
+        st.markdown("**🧭 문화(일반)**")
+        st.markdown("\n".join([f"- {x}" for x in kb.get("문화", [])]) or "- 자료 준비 중")
+    with c2:
+        st.markdown("**✅ 지켜야 할 예절**")
+        st.markdown("\n".join([f"- {x}" for x in kb.get("지켜야할_예절", [])]) or "- 자료 준비 중")
+        st.markdown("**😕 여행 시 불편한 점(주의)**")
+        st.markdown("\n".join([f"- {x}" for x in kb.get("불편한점", [])]) or "- 자료 준비 중")
+
+    with st.expander("ℹ️ 참고/한계"):
+        st.write(
+            """
+            - 음식점/관광지 평점은 Google Places API 응답을 사용하며, 지역/시간에 따라 변동될 수 있습니다.\n
+            - 네이버 지도 평점은 공식 API가 제한적이라 기본 제공하지 않습니다. 필요 시 별도 크롤링/비공식 API는 서비스 약관을 확인 후 자체 구현하세요.\n
+            - 만족도 점수는 단순 가중 평균(평점×log(리뷰수)) 예시이며, 가중치/관심사/시즌 등을 반영해 조정 가능합니다.
+            """
+        )
+
+else:
+    st.info("나라와 도시를 선택한 뒤 ‘추천 보기’를 눌러주세요.")
+```
+
+---
+
+## requirements.txt
+
+```txt
+streamlit>=1.36.0
+pandas>=2.2.2
+googlemaps>=4.10.0
+python-dotenv>=1.0.1
+```
+
+---
+
+## 사용 팁
+
+* **Naver 평점**: 공식 Places API가 없어 기본 기능에 포함하지 않았습니다. 운영 환경 정책을 확인 후 별도 수집 로직을 플러그인처럼 추가하세요.
+* **API 요금**: Google Places/Geocoding은 유료 과금 구간이 있습니다. 캐시(`@st.cache_data`)로 호출 수를 줄였습니다.
+* **확장 포인트**: `COUNTRY_KB`에 나라별 문화를 계속 추가/수정하세요.
