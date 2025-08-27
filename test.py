@@ -4,18 +4,18 @@ import pandas as pd
 import requests
 from urllib.parse import quote
 
-# ---------------------------------
+# ---------------------------
 # 페이지/시크릿 설정
-# ---------------------------------
+# ---------------------------
 st.set_page_config(page_title="해외여행 추천(실시간 맛집)", page_icon="🌍", layout="wide")
 
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", None)  # Google Places API
-NAVER_CLIENT_ID = st.secrets.get("NAVER_CLIENT_ID", None)  # Naver Local Search
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", None)          # Google Places API (Text Search)
+NAVER_CLIENT_ID = st.secrets.get("NAVER_CLIENT_ID", None)        # Naver Local Search
 NAVER_CLIENT_SECRET = st.secrets.get("NAVER_CLIENT_SECRET", None)
 
-# ---------------------------------
+# ---------------------------
 # 한국인 인기 여행지 샘플 데이터
-# ---------------------------------
+# ---------------------------
 COUNTRY_DATA = {
     "일본": {
         "만족도": 4.7,
@@ -89,13 +89,24 @@ COUNTRY_DATA = {
         "불편": ["언어 장벽(영·스)", "영업시간 변동", "관광지 혼잡"],
         "대표음식키워드": "파에야 하몽 타파스",
     },
+    "싱가포르": {
+        "만족도": 4.6,
+        "도시": {
+            "싱가포르": ["리틀인디아", "차이나타운", "티옹바루"],
+        },
+        "위생": ["수돗물 안전", "호커센터 위생 관리 양호", "실내냉방 강함"],
+        "문화": ["깨끗함 유지(벌금 엄격)", "줄서기/공공질서 준수", "껌 반입 금지"],
+        "불편": ["물가 비쌈", "실내외 온도차", "술값 비쌈"],
+        "대표음식키워드": "치킨라이스 락사 칠리크랩",
+    },
 }
 
-# ---------------------------------
-# API 함수들 (캐시)
-# ---------------------------------
+# ---------------------------
+# API 호출 함수들 (캐시)
+# ---------------------------
 @st.cache_data(show_spinner=False, ttl=3600)
 def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
+    """Google Places Text Search: 평점/리뷰수 포함"""
     if not GOOGLE_API_KEY:
         return [], "Google API Key 없음"
     url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
@@ -104,7 +115,6 @@ def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
         items = r.json().get("results", [])
-        # 평점 & 리뷰수 기준 정렬
         items = sorted(
             items,
             key=lambda x: (x.get("rating", 0), x.get("user_ratings_total", 0)),
@@ -117,9 +127,7 @@ def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
             reviews = it.get("user_ratings_total")
             address = it.get("formatted_address", "")
             place_id = it.get("place_id")
-            link = None
-            if place_id:
-                link = f"https://www.google.com/maps/search/?api=1&query={quote(name)}&query_place_id={place_id}"
+            link = f"https://www.google.com/maps/search/?api=1&query={quote(name)}&query_place_id={place_id}" if place_id else None
             results.append(
                 {
                     "source": "Google",
@@ -136,6 +144,7 @@ def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def naver_local_search(query: str, display: int = 3):
+    """Naver Local Search: 평점 미제공(상호/주소/링크만)"""
     if not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
         return [], "Naver API Key 없음"
     url = "https://openapi.naver.com/v1/search/local.json"
@@ -153,16 +162,14 @@ def naver_local_search(query: str, display: int = 3):
             title = it.get("title", "").replace("<b>", "").replace("</b>", "")
             address = it.get("roadAddress") or it.get("address") or ""
             link = it.get("link") or None
-            tel = it.get("telephone", "") or None
             results.append(
                 {
                     "source": "Naver",
                     "name": title,
-                    "rating": None,         # 공식 API는 평점 제공하지 않음
+                    "rating": None,
                     "reviews": None,
                     "address": address,
                     "link": link,
-                    "tel": tel,
                 }
             )
         return results, None
@@ -185,9 +192,9 @@ def search_restaurants(city: str, keyword: str, use_google: bool, use_naver: boo
 
     return results, errors
 
-# ---------------------------------
+# ---------------------------
 # UI
-# ---------------------------------
+# ---------------------------
 st.title("🌍 해외여행 만족도 & 추천 가이드 (실시간 맛집 포함)")
 st.caption("한국인 인기 여행지를 중심으로, 만족도/도시·소도시/위생·문화/불편한 점과 실시간 맛집 정보를 제공합니다.")
 
@@ -253,7 +260,6 @@ with right:
             if not use_google and not use_naver:
                 st.warning("최소 1개 이상의 소스를 선택하세요.")
             else:
-                # 키 확인
                 if use_google and not GOOGLE_API_KEY:
                     st.warning("🔑 Google API 키가 설정되지 않았습니다. secrets.toml에 GOOGLE_API_KEY를 추가하세요.")
                 if use_naver and not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
@@ -267,35 +273,11 @@ with right:
 
                 if results:
                     table = pd.DataFrame(results)
-                    # 정렬: Google 결과가 있으면 rating/reviews 기준 정렬
                     sort_cols = [c for c in ["rating", "reviews"] if c in table.columns]
                     if sort_cols:
                         table = table.sort_values(by=sort_cols, ascending=False)
-
                     show_cols = [c for c in ["source", "name", "rating", "reviews", "address", "link"] if c in table.columns]
                     st.dataframe(table[show_cols], use_container_width=True)
                 else:
                     st.info("검색 결과가 없습니다. 키워드를 바꾸거나 소스를 변경해보세요.")
 
-st.divider()
-with st.expander("🔧 설정 가이드(필수)"):
-    st.markdown(
-        "**1) `requirements.txt`**\n"
-        "```\n"
-        "streamlit\n"
-        "pandas\n"
-        "requests\n"
-        "```\n\n"
-        "**2) `.streamlit/secrets.toml`**\n"
-        "```toml\n"
-        "GOOGLE_API_KEY = \"구글_플레이스_API_키\"      # Google 사용 시 필수\n"
-        "NAVER_CLIENT_ID = \"네이버_클라이언트ID\"       # Naver 사용 시 필수\n"
-        "NAVER_CLIENT_SECRET = \"네이버_클라이언트SECRET\"\n"
-        "```\n\n"
-        "- Google: Places API(Text Search) 활성화 필요, 과금/쿼터 확인\n"
-        "- Naver: OpenAPI > 검색(Local) API 사용 (⚠️ 평점은 공식 API에서 제공하지 않음)\n\n"
-        "**3) 실행**\n"
-        "```bash\n"
-        "streamlit run app.py\n"
-        "```\n"
-    )
