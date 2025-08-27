@@ -1,8 +1,7 @@
 import streamlit as st
-import pandas as pd
 
 # ---------------------------
-# 샘플 데이터
+# 여행 데이터 (더 많은 나라 추가)
 # ---------------------------
 travel_data = {
     "일본": {
@@ -55,56 +54,77 @@ travel_data = {
         "문화": "예술과 낭만의 중심지, 카페 문화 발달.",
         "꼭 지켜야 하는 문화": ["프랑스어 기본 인사 사용", "카페에서 큰 소리 금지", "시간 엄수"]
     },
+    "이탈리아": {
+        "flag": "🇮🇹",
+        "만족도": 4.6,
+        "도시": {"로마": ["바티칸시티", "티볼리", "오스티아"], "밀라노": ["코모", "베르가모", "토리노"]},
+        "음식": {"피자 🍕": ["다 미켈레", "소르빌로", "피제리아 브란디"], "파스타 🍝": ["라 페르골라", "로시올리", "트라토리아 다 엔조"]},
+        "불편한점": ["소매치기 주의", "대중교통 파업", "관광객 많음"],
+        "위생": "대체로 양호하나 관광지 공공 화장실은 불편할 수 있음.",
+        "문화": "로마 제국 유적, 예술과 패션의 본고장.",
+        "꼭 지켜야 하는 문화": ["교회 방문 시 복장 단정히", "식사 중 자리 이동 금지", "현지인과 인사 시 볼키스"]
+    },
+    "스페인": {
+        "flag": "🇪🇸",
+        "만족도": 4.5,
+        "도시": {"바르셀로나": ["몬세라트", "시체스", "타라고나"], "마드리드": ["톨레도", "세고비아", "아빌라"]},
+        "음식": {"타파스 🥘": ["엘 시드라", "라 보데가", "엘 퀴뻬"], "파에야 🥘": ["라 바라카", "카사 루시아", "엘 마리노"]},
+        "불편한점": ["스페인어 필수", "늦은 저녁 문화 적응 필요", "소매치기 많음"],
+        "위생": "식당과 숙소는 위생적이지만 길거리 음식은 주의.",
+        "문화": "플라멩코, 축구, 시에스타(낮잠 문화) 유명.",
+        "꼭 지켜야 하는 문화": ["점심 후 낮잠 문화 존중", "저녁 식사는 늦게 시작", "플라멩코 공연 중 방해 금지"]
+    }
 }
 
 # ---------------------------
 # Streamlit UI
 # ---------------------------
 st.set_page_config(page_title="해외여행 추천 웹", page_icon="🌍", layout="centered")
-st.title("🌍 한국인 인기 해외여행 추천 가이드")
+st.markdown("<h1 style='text-align: center; font-size: 50px;'>🌍 해외여행 추천 가이드</h1>", unsafe_allow_html=True)
 
-st.subheader("어느 나라를 원하시나요? ✈️")
+st.markdown("<h2 style='font-size: 30px;'>어느 나라를 원하시나요? ✈️</h2>", unsafe_allow_html=True)
 
-# 객관식 나라 선택 (라디오 버튼)
+# 객관식 나라 선택 (라디오 버튼, 큰 글씨 적용)
 country = st.radio(
-    "나라 선택",
+    "",
     list(travel_data.keys()),
-    format_func=lambda x: f"{travel_data[x]['flag']} {x}"
+    format_func=lambda x: f"{travel_data[x]['flag']} {x}",
+    horizontal=False
 )
 
 if country:
     data = travel_data[country]
-    st.markdown(f"## {data['flag']} {country} 여행 정보")
+    st.markdown(f"<h2 style='font-size: 35px;'>{data['flag']} {country} 여행 정보</h2>", unsafe_allow_html=True)
 
     # 만족도
     stars = "⭐" * int(data["만족도"]) + ("✨" if data["만족도"] % 1 >= 0.5 else "")
     st.metric("여행 만족도 (5점 만점)", f"{data['만족도']} ({stars})")
 
     # 도시 & 소도시
-    st.markdown("### 📍 추천 도시 & 소도시")
+    st.markdown("<h3 style='font-size: 25px;'>📍 추천 도시 & 소도시</h3>", unsafe_allow_html=True)
     for city, small_cities in data["도시"].items():
-        st.markdown(f"- **{city}** → {', '.join(small_cities)}")
+        st.markdown(f"- <b>{city}</b> → {', '.join(small_cities)}", unsafe_allow_html=True)
 
     # 음식 & 음식점
-    st.markdown("### 🍽️ 추천 음식 & 음식점")
+    st.markdown("<h3 style='font-size: 25px;'>🍽️ 추천 음식 & 음식점</h3>", unsafe_allow_html=True)
     for food, restaurants in data["음식"].items():
-        st.markdown(f"- {food}")
+        st.markdown(f"- <b>{food}</b>", unsafe_allow_html=True)
         st.markdown("\n".join([f"  • {r}" for r in restaurants]))
 
     # 불편한 점
-    st.markdown("### ⚠️ 여행 시 불편한 점")
+    st.markdown("<h3 style='font-size: 25px;'>⚠️ 여행 시 불편한 점</h3>", unsafe_allow_html=True)
     for issue in data["불편한점"]:
         st.warning(issue)
 
     # 위생
-    st.markdown("### 🧼 위생")
+    st.markdown("<h3 style='font-size: 25px;'>🧼 위생</h3>", unsafe_allow_html=True)
     st.info(data["위생"])
 
     # 문화
-    st.markdown("### 🎭 문화")
+    st.markdown("<h3 style='font-size: 25px;'>🎭 문화</h3>", unsafe_allow_html=True)
     st.write(data["문화"])
 
     # 꼭 지켜야 하는 문화
-    st.markdown("### 📌 꼭 지켜야 하는 문화")
+    st.markdown("<h3 style='font-size: 25px;'>📌 꼭 지켜야 하는 문화</h3>", unsafe_allow_html=True)
     for rule in data["꼭 지켜야 하는 문화"]:
         st.success(rule)
