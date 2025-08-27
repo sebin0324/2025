@@ -280,4 +280,3 @@ with right:
                     st.dataframe(table[show_cols], use_container_width=True)
                 else:
                     st.info("검색 결과가 없습니다. 키워드를 바꾸거나 소스를 변경해보세요.")
-
