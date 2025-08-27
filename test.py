@@ -1,23 +1,21 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import requests
-from urllib.parse import urlencode
+from urllib.parse import quote
 
-# ---------------------------
-# 페이지 설정
-# ---------------------------
+# ---------------------------------
+# 페이지/시크릿 설정
+# ---------------------------------
 st.set_page_config(page_title="해외여행 추천(실시간 맛집)", page_icon="🌍", layout="wide")
 
-# ---------------------------
-# 환경설정/시크릿
-# ---------------------------
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", None)
-NAVER_CLIENT_ID = st.secrets.get("NAVER_CLIENT_ID", None)
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", None)  # Google Places API
+NAVER_CLIENT_ID = st.secrets.get("NAVER_CLIENT_ID", None)  # Naver Local Search
 NAVER_CLIENT_SECRET = st.secrets.get("NAVER_CLIENT_SECRET", None)
 
-# ---------------------------
-# 샘플 데이터 (한국인 인기 여행지 중심)
-# ---------------------------
+# ---------------------------------
+# 한국인 인기 여행지 샘플 데이터
+# ---------------------------------
 COUNTRY_DATA = {
     "일본": {
         "만족도": 4.7,
@@ -51,7 +49,7 @@ COUNTRY_DATA = {
             "다낭": ["호이안", "바나힐", "후에"],
         },
         "위생": ["생수 권장", "얼음/샐러드 주의", "길거리 음식 신뢰도 확인"],
-        "문화": ["협상 문화(가격 흥정)", "오토바이 교통 주의", "현지 통화 소액권 유용"],
+        "문화": ["가격 흥정 문화", "오토바이 교통 주의", "현지 통화 소액권 유용"],
         "불편": ["오토바이 소음/매연", "스콜성 비", "QR/카드 결제 편차"],
         "대표음식키워드": "쌀국수 반미 분짜",
     },
@@ -93,9 +91,9 @@ COUNTRY_DATA = {
     },
 }
 
-# ---------------------------
-# API 호출 함수들 (캐시)
-# ---------------------------
+# ---------------------------------
+# API 함수들 (캐시)
+# ---------------------------------
 @st.cache_data(show_spinner=False, ttl=3600)
 def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
     if not GOOGLE_API_KEY:
@@ -105,22 +103,23 @@ def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
     try:
         r = requests.get(url, params=params, timeout=15)
         r.raise_for_status()
-        data = r.json().get("results", [])
-        # 평점 높은 순 + 리뷰수 많은 순으로 정렬
-        data_sorted = sorted(
-            data,
+        items = r.json().get("results", [])
+        # 평점 & 리뷰수 기준 정렬
+        items = sorted(
+            items,
             key=lambda x: (x.get("rating", 0), x.get("user_ratings_total", 0)),
             reverse=True,
         )[:limit]
         results = []
-        for item in data_sorted:
-            name = item.get("name")
-            rating = item.get("rating")
-            reviews = item.get("user_ratings_total")
-            address = item.get("formatted_address", "")
-            place_id = item.get("place_id")
-            # Google 지도 검색 링크(일반적인 웹검색 URL)
-            gmap_link = f"https://www.google.com/maps/search/?api=1&query={requests.utils.quote(name)}&query_place_id={place_id}" if place_id else None
+        for it in items:
+            name = it.get("name")
+            rating = it.get("rating")
+            reviews = it.get("user_ratings_total")
+            address = it.get("formatted_address", "")
+            place_id = it.get("place_id")
+            link = None
+            if place_id:
+                link = f"https://www.google.com/maps/search/?api=1&query={quote(name)}&query_place_id={place_id}"
             results.append(
                 {
                     "source": "Google",
@@ -128,7 +127,7 @@ def google_places_text_search(query: str, language: str = "ko", limit: int = 3):
                     "rating": rating,
                     "reviews": reviews,
                     "address": address,
-                    "link": gmap_link,
+                    "link": link,
                 }
             )
         return results, None
@@ -140,7 +139,7 @@ def naver_local_search(query: str, display: int = 3):
     if not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
         return [], "Naver API Key 없음"
     url = "https://openapi.naver.com/v1/search/local.json"
-    params = {"query": query, "display": display, "start": 1, "sort": "comment"}  # 평점은 미제공
+    params = {"query": query, "display": display, "start": 1, "sort": "comment"}
     headers = {
         "X-Naver-Client-Id": NAVER_CLIENT_ID,
         "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
@@ -152,18 +151,18 @@ def naver_local_search(query: str, display: int = 3):
         results = []
         for it in items[:display]:
             title = it.get("title", "").replace("<b>", "").replace("</b>", "")
-            link = it.get("link")
             address = it.get("roadAddress") or it.get("address") or ""
-            tel = it.get("telephone", "")
+            link = it.get("link") or None
+            tel = it.get("telephone", "") or None
             results.append(
                 {
                     "source": "Naver",
                     "name": title,
-                    "rating": None,  # 공식 API는 평점 제공하지 않음
+                    "rating": None,         # 공식 API는 평점 제공하지 않음
                     "reviews": None,
                     "address": address,
-                    "link": link or None,
-                    "tel": tel or None,
+                    "link": link,
+                    "tel": tel,
                 }
             )
         return results, None
@@ -171,31 +170,30 @@ def naver_local_search(query: str, display: int = 3):
         return [], f"Naver API 오류: {e}"
 
 def search_restaurants(city: str, keyword: str, use_google: bool, use_naver: bool, limit: int = 3):
-    results = []
-    errors = []
-    query_ko = f"{city} {keyword}".strip()
+    results, errors = [], []
+    query = f"{city} {keyword}".strip()
 
     if use_google:
-        g, err = google_places_text_search(query_ko, language="ko", limit=limit)
+        g, err = google_places_text_search(query, language="ko", limit=limit)
         results.extend(g)
         if err: errors.append(err)
 
     if use_naver:
-        n, err = naver_local_search(query_ko, display=limit)
+        n, err = naver_local_search(query, display=limit)
         results.extend(n)
         if err: errors.append(err)
 
     return results, errors
 
-# ---------------------------
-# UI 컴포넌트
-# ---------------------------
+# ---------------------------------
+# UI
+# ---------------------------------
 st.title("🌍 해외여행 만족도 & 추천 가이드 (실시간 맛집 포함)")
 st.caption("한국인 인기 여행지를 중심으로, 만족도/도시·소도시/위생·문화/불편한 점과 실시간 맛집 정보를 제공합니다.")
 
-colA, colB = st.columns([1, 2], gap="large")
+left, right = st.columns([1, 2], gap="large")
 
-with colA:
+with left:
     country = st.selectbox("나라 선택", list(COUNTRY_DATA.keys()))
     city = None
     if country:
@@ -204,7 +202,6 @@ with colA:
         small_cities = COUNTRY_DATA[country]["도시"].get(city, [])
 
     st.divider()
-
     st.markdown("**맛집 검색 옵션**")
     default_kw = COUNTRY_DATA[country]["대표음식키워드"] if country else "맛집"
     keyword = st.text_input("검색 키워드(예: 스시, 파에야, 버거…)", value=default_kw)
@@ -215,14 +212,15 @@ with colA:
     )
     limit = st.slider("맛집 표시 개수(소스별)", min_value=1, max_value=5, value=3, step=1)
 
-with colB:
+with right:
     if country:
         data = COUNTRY_DATA[country]
         st.subheader(f"🇺🇳 {country} 여행 인포")
-        top_cols = st.columns(3)
-        top_cols[0].metric("여행 만족도(5점)", f"{data['만족도']}")
-        top_cols[1].metric("추천 도시 수", f"{len(data['도시'])}")
-        top_cols[2].metric("소도시(예시)", f"{len([s for v in data['도시'].values() for s in v])}")
+
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("여행 만족도(5점)", f"{data['만족도']}")
+        mc2.metric("추천 도시 수", f"{len(data['도시'])}")
+        mc3.metric("소도시(예시)", f"{len([s for v in data['도시'].values() for s in v])}")
 
         st.markdown("### 📍 추천 도시 → 소도시")
         for c, subs in data["도시"].items():
@@ -237,7 +235,6 @@ with colB:
         st.markdown("### ⚠️ 불편한 점")
         st.write("• " + " / ".join(data["불편"]))
 
-        # 만족도 비교 간단 차트
         st.markdown("### 📊 나라별 만족도 비교")
         df = pd.DataFrame(
             {"나라": list(COUNTRY_DATA.keys()),
@@ -256,26 +253,25 @@ with colB:
             if not use_google and not use_naver:
                 st.warning("최소 1개 이상의 소스를 선택하세요.")
             else:
-                if (use_google and not GOOGLE_API_KEY) or (use_naver and not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET)):
-                    st.warning("🔑 API 키가 설정되지 않았습니다. 아래 '설정 가이드'를 참고해 secrets.toml을 구성하세요.")
+                # 키 확인
+                if use_google and not GOOGLE_API_KEY:
+                    st.warning("🔑 Google API 키가 설정되지 않았습니다. secrets.toml에 GOOGLE_API_KEY를 추가하세요.")
+                if use_naver and not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
+                    st.warning("🔑 Naver API 키가 설정되지 않았습니다. secrets.toml에 NAVER_CLIENT_ID/SECRET을 추가하세요.")
 
                 with st.spinner(f"‘{city}’ 맛집 검색 중..."):
                     results, errs = search_restaurants(city, keyword, use_google, use_naver, limit)
 
-                if errs:
-                    for e in errs:
-                        st.error(e)
+                for e in errs:
+                    st.error(e)
 
                 if results:
-                    # 표 형태로 깔끔하게
                     table = pd.DataFrame(results)
-                    # 정렬: Google 있으면 rating desc → reviews desc
-                    if "rating" in table.columns:
-                        table = table.sort_values(
-                            by=[col for col in ["rating", "reviews"] if col in table.columns],
-                            ascending=False
-                        )
-                    # 표시 컬럼 제한
+                    # 정렬: Google 결과가 있으면 rating/reviews 기준 정렬
+                    sort_cols = [c for c in ["rating", "reviews"] if c in table.columns]
+                    if sort_cols:
+                        table = table.sort_values(by=sort_cols, ascending=False)
+
                     show_cols = [c for c in ["source", "name", "rating", "reviews", "address", "link"] if c in table.columns]
                     st.dataframe(table[show_cols], use_container_width=True)
                 else:
@@ -284,5 +280,22 @@ with colB:
 st.divider()
 with st.expander("🔧 설정 가이드(필수)"):
     st.markdown(
-        """
-**1) `requirements.txt`**
+        "**1) `requirements.txt`**\n"
+        "```\n"
+        "streamlit\n"
+        "pandas\n"
+        "requests\n"
+        "```\n\n"
+        "**2) `.streamlit/secrets.toml`**\n"
+        "```toml\n"
+        "GOOGLE_API_KEY = \"구글_플레이스_API_키\"      # Google 사용 시 필수\n"
+        "NAVER_CLIENT_ID = \"네이버_클라이언트ID\"       # Naver 사용 시 필수\n"
+        "NAVER_CLIENT_SECRET = \"네이버_클라이언트SECRET\"\n"
+        "```\n\n"
+        "- Google: Places API(Text Search) 활성화 필요, 과금/쿼터 확인\n"
+        "- Naver: OpenAPI > 검색(Local) API 사용 (⚠️ 평점은 공식 API에서 제공하지 않음)\n\n"
+        "**3) 실행**\n"
+        "```bash\n"
+        "streamlit run app.py\n"
+        "```\n"
+    )
