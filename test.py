@@ -93,7 +93,7 @@ travel_data = {
 st.set_page_config(page_title="해외여행 추천 웹", page_icon="🌍", layout="centered")
 
 st.title("🌍 한국인 인기 해외여행 추천 가이드")
-st.write("✈️ 나라를 선택하면 **만족도, 도시·소도시, 음식점, 불편한 점, 문화, 위생**까지 알려드립니다!")
+st.write("✈️ 나라를 선택하면 원하는 정보(만족도, 도시, 음식, 문화 등)를 선택해 확인할 수 있습니다!")
 
 # 나라 선택
 country = st.selectbox("가고 싶은 나라를 선택하세요:", list(travel_data.keys()))
@@ -102,46 +102,45 @@ if country:
     data = travel_data[country]
     st.subheader(f"{data['flag']} {country} 여행 정보")
 
-    # 만족도
-    stars = "⭐" * int(data["만족도"]) + ("✨" if data["만족도"] % 1 >= 0.5 else "")
-    st.metric("여행 만족도 (5점 만점)", f"{data['만족도']} ({stars})")
+    # 세부 항목 선택
+    option = st.radio(
+        "보고 싶은 정보를 선택하세요:",
+        ["만족도", "추천 도시 & 소도시", "추천 음식 & 음식점", "불편한 점", "위생", "문화", "꼭 지켜야 하는 문화", "나라별 만족도 비교"]
+    )
 
-    # 도시 & 소도시
-    st.markdown("### 📍 추천 도시 & 소도시")
-    for city, small_cities in data["도시"].items():
-        st.markdown(f"- **{city}** → {', '.join(small_cities)}")
+    if option == "만족도":
+        stars = "⭐" * int(data["만족도"]) + ("✨" if data["만족도"] % 1 >= 0.5 else "")
+        st.metric("여행 만족도 (5점 만점)", f"{data['만족도']} ({stars})")
 
-    # 음식 & 음식점
-    st.markdown("### 🍽️ 추천 음식 & 음식점")
-    for food, restaurants in data["음식"].items():
-        st.markdown(f"- {food}")
-        st.markdown("\n".join([f"  • {r}" for r in restaurants]))
+    elif option == "추천 도시 & 소도시":
+        for city, small_cities in data["도시"].items():
+            st.markdown(f"- **{city}** → {', '.join(small_cities)}")
 
-    # 불편한 점
-    st.markdown("### ⚠️ 여행 시 불편한 점")
-    for issue in data["불편한점"]:
-        st.warning(issue)
+    elif option == "추천 음식 & 음식점":
+        for food, restaurants in data["음식"].items():
+            st.markdown(f"- {food}")
+            st.markdown("\n".join([f"  • {r}" for r in restaurants]))
 
-    # 위생
-    st.markdown("### 🧼 위생")
-    st.info(data["위생"])
+    elif option == "불편한 점":
+        for issue in data["불편한점"]:
+            st.warning(issue)
 
-    # 문화
-    st.markdown("### 🎭 문화")
-    st.write(data["문화"])
+    elif option == "위생":
+        st.info(data["위생"])
 
-    # 꼭 지켜야 하는 문화
-    st.markdown("### 📌 꼭 지켜야 하는 문화")
-    for rule in data["꼭 지켜야 하는 문화"]:
-        st.success(rule)
+    elif option == "문화":
+        st.write(data["문화"])
 
-    # 비교 그래프
-    st.subheader("📊 나라별 여행 만족도 비교")
-    df = pd.DataFrame({
-        "나라": list(travel_data.keys()),
-        "만족도": [travel_data[c]["만족도"] for c in travel_data]
-    })
-    st.bar_chart(df.set_index("나라"))
+    elif option == "꼭 지켜야 하는 문화":
+        for rule in data["꼭 지켜야 하는 문화"]:
+            st.success(rule)
+
+    elif option == "나라별 만족도 비교":
+        df = pd.DataFrame({
+            "나라": list(travel_data.keys()),
+            "만족도": [travel_data[c]["만족도"] for c in travel_data]
+        })
+        st.bar_chart(df.set_index("나라"))
 
 st.write("---")
 st.info("💡 음식점 평점은 실제로는 구글맵/네이버맵 API와 연동해 최신 데이터를 가져올 수 있습니다!")
